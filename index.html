@@ -181,3 +181,103 @@ document.getElementById("timeframe").addEventListener("change", () => {
         document.getElementById("timeframe").value
     );
 });
+import WebSocket from "ws";
+
+const wss = new WebSocket.Server({ port: 8080 });
+
+const BINANCE_STREAM =
+  "wss://stream.binance.com:9443/ws/btcusdt@kline_1m";
+
+const marketSocket = new WebSocket(BINANCE_STREAM);
+
+wss.on("connection", client => {
+  marketSocket.on("message", msg => {
+    client.send(msg.toString());
+  });
+});
+
+console.log("WS Server running on :8080");
+export function createChart() {
+  return LightweightCharts.createChart(
+    document.getElementById("chart"),
+    {
+      layout: {
+        background: { color: "#0f172a" },
+        textColor: "#e5e7eb"
+      },
+      grid: {
+        vertLines: { color: "#1e293b" },
+        horzLines: { color: "#1e293b" }
+      }
+    }
+  );
+}
+export function EMA(data, period) {
+  const k = 2 / (period + 1);
+  let ema = data[0].close;
+
+  return data.map(d => {
+    ema = d.close * k + ema * (1 - k);
+    return { time: d.time, value: ema };
+  });
+}
+
+export function RSI(data, period = 14) {
+  let gains = 0, losses = 0;
+
+  return data.map((d, i) => {
+    if (i === 0) return null;
+
+    const diff = d.close - data[i - 1].close;
+    diff >= 0 ? (gains += diff) : (losses -= diff);
+
+    const rs = gains / losses;
+    return {
+      time: d.time,
+      value: 100 - 100 / (1 + rs)
+    };
+  }).filter(Boolean);
+}
+export const State = {
+  candles: [],
+  subscribers: [],
+
+  update(data) {
+    this.candles.push(data);
+    this.subscribers.forEach(fn => fn(this.candles));
+  },
+
+  subscribe(fn) {
+    this.subscribers.push(fn);
+  }
+};
+import { createChart } from "./chart.js";
+import { EMA, RSI } from "./indicators.js";
+import { State } from "./state.js";
+
+const chart = createChart();
+const candles = chart.addCandlestickSeries();
+const emaLine = chart.addLineSeries({ color: "yellow" });
+const rsiLine = chart.addLineSeries({ color: "cyan" });
+
+const socket = new WebSocket("ws://localhost:8080");
+
+socket.onmessage = e => {
+  const msg = JSON.parse(e.data);
+  const k = msg.k;
+
+  const candle = {
+    time: k.t / 1000,
+    open: +k.o,
+    high: +k.h,
+    low: +k.l,
+    close: +k.c
+  };
+
+  State.update(candle);
+};
+
+State.subscribe(data => {
+  candles.setData(data);
+  emaLine.setData(EMA(data, 20));
+});
